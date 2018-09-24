@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 
 import boto3
-from datetime import datetime, timedelta 
+from datetime import datetime, timedelta
+from pprint import pprint
 
 def lambda_handler(event, context):
     """run in lambda"""
     runSnapshot()
-  
-def runSnapshot():
+    deleteExpired()
+
+def runSnapshot(retention=7):
     """ Find all istances to backup and snapshot"""
     ec2 = boto3.client('ec2')
     reservations = ec2.describe_instances(
@@ -15,33 +17,47 @@ def runSnapshot():
             {'Name': 'tag-key', 'Values': ['backup', 'Backup']},
         ]
     )['Reservations']
-    
+
     instances = sum(
         [
             [i for i in r['Instances']]
             for r in reservations
         ], [])
-    
+
     for instance in instances:
         for dev in instance['BlockDeviceMappings']:
             if dev.get('Ebs', None) is None:
                 # skip non-EBS volumes
                 continue
             vol_id = dev['Ebs']['VolumeId']
-    
+
             snapshot = ec2.create_snapshot(
                 VolumeId=vol_id,
             )
+            print("Created tag for", vol_id)
             ec2.create_tags(
                 Resources = [snapshot['SnapshotId']],
-                Tags = [ 
+                Tags = [
                     {'Key': 'autosnap','Value': 'True'},
-                    {'Key': 'deleteOn','Value': str(datetime.now()+timedelta(days=30))},
-
+                    {'Key': 'deleteOn','Value': str((datetime.now()+timedelta(days=retention)).timestamp())},
                 ]
             )
-    
+def deleteExpired():
+    """
+    Delete expired snapshots
+    """
+    ec2 = boto3.client('ec2')
+    snapshots = ec2.describe_snapshots()
+    for snapshot in snapshots['Snapshots']:
+        tags = snapshot.get('Tags')
+        if tags:
+            if len(list(filter(lambda x:  x['Key'] == 'autosnap' , tags))) == 1:
+                deleteOn = list(filter(lambda x:  x['Key'] == 'deleteOn' , tags))[0]['Value']
+                if float(deleteOn) < datetime.now().timestamp():
+                    pprint (snapshot)
+
+
 if __name__ == '__main__':
     """ Run in shell """
     runSnapshot()
-
+    deleteExpired()
