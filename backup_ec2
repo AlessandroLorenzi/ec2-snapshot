@@ -25,6 +25,8 @@ def runSnapshot(retention=7):
         ], [])
 
     for instance in instances:
+        instance_name = get_tag(instance['Tags'],  'Name')
+        snapshot_name = "Snapshot for %s" % (instance_name)
         for dev in instance['BlockDeviceMappings']:
             if dev.get('Ebs', None) is None:
                 # skip non-EBS volumes
@@ -34,11 +36,11 @@ def runSnapshot(retention=7):
             snapshot = ec2.create_snapshot(
                 VolumeId=vol_id,
             )
-            print("Created tag for", vol_id)
             ec2.create_tags(
                 Resources = [snapshot['SnapshotId']],
                 Tags = [
                     {'Key': 'autosnap','Value': 'True'},
+                    {'Key': 'Name','Value': snapshot_name},
                     {'Key': 'deleteOn','Value': str((datetime.now()+timedelta(days=retention)).timestamp())},
                 ]
             )
@@ -54,8 +56,13 @@ def deleteExpired():
             if len(list(filter(lambda x:  x['Key'] == 'autosnap' , tags))) == 1:
                 deleteOn = list(filter(lambda x:  x['Key'] == 'deleteOn' , tags))[0]['Value']
                 if float(deleteOn) < datetime.now().timestamp():
-                    pprint (snapshot)
+                    ec2.delete_snapshot(SnapshotId=snapshot['SnapshotId'])
 
+def get_tag(tags, key):
+    for tag in tags:
+        if tag['Key'] == key:
+            return tag.get('Value')
+    return 'Undef'
 
 if __name__ == '__main__':
     """ Run in shell """
